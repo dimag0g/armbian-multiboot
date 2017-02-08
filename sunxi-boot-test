@@ -1,0 +1,32 @@
+#!/bin/bash
+
+supported="nanopim1 nanopiair nanopineo bananapim2plus beelinkx2 orangepizero orangepilite orangepione orangepiplus orangepipc orangepipcplus orangepi2 orangepiplus2e "
+
+for target in $supported; do
+    echo -n Testing $target
+    rm -fr /tmp/*.deb
+    rm -fr /tmp/sunxi-boot
+
+    (
+	set -e
+	cd /tmp;
+	apt-get -qq download linux-jessie-root-$target linux-u-boot-$target-default
+	mkdir -p /tmp/sunxi-boot
+	dpkg -x /tmp/linux-jessie-root-$target*.deb /tmp/sunxi-boot/
+	dpkg -x /tmp/linux-u-boot-$target*.deb /tmp/sunxi-boot/
+
+	touch /tmp/sunxi-boot/usr/share/armbian/boot.cmd
+	touch /tmp/sunxi-boot/usr/share/armbian/armbianEnv.txt
+	touch /tmp/sunxi-boot/usr/lib/linux-u-boot-$target*/u-boot-sunxi-with-spl.bin
+	touch /tmp/sunxi-boot/usr/lib/u-boot/platform_install.sh
+
+    ) 2>/dev/null
+    if [ $? -eq 0 ]; then
+	echo : OK
+    else
+	echo : NOK
+    fi
+done
+
+rm -fr /tmp/*.deb
+rm -fr /tmp/sunxi-boot

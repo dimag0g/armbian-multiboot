@@ -1,0 +1,115 @@
+#!/bin/bash
+
+rootdir=`stat -c %m "$0"`
+rootpart=`df "$0" | tail -1 | cut -f1 -d' '`
+rootdev=`lsblk -dpno pkname $rootpart`
+curboot=`readlink -f $rootdir/boot`
+
+supported="nanopim1 nanopiair nanopineo bananapim2plus beelinkx2 orangepizero orangepilite orangepione orangepiplus orangepipc orangepipcplus orangepi2 orangepiplus2e "
+
+echo "* Root directory is $rootdir, root device is $rootdev"
+
+if [ `id -u` != 0 ]; then
+    echo "*** `basename "$0"` must be run as root"
+    exit 1
+fi
+
+if [ `basename $curboot` == "boot" ]; then
+    echo "************************"
+    echo "* Setting up multiboot *"
+    echo "************************"
+    set -e
+    #curboard=`readlink -f $rootdir/boot/script.bin`
+    #curboard=`basename $curboard .bin`
+    curboard=`ls -d /usr/lib/linux-u-boot* | cut -f4 -d- | cut -f1 -d_`
+    echo -n "* Current board is "
+    echo "$supported" | grep -o "$curboard "
+    cp $rootdir/etc/modules $rootdir/boot/modules
+    #mkdir -p $rootdir/boot/modprobe.d/
+    #cp $rootdir/etc/modprobe.d/* $rootdir/boot/modprobe.d/
+    #dd if=$rootdev of=$rootdir/boot/uboot bs=1024 skip=8 count=664
+    cp $rootdir/usr/lib/linux-u-boot-$curboard*/u-boot-sunxi-with-spl.bin $rootdir/boot/
+    cp $rootdir/usr/lib/u-boot/platform_install.sh $rootdir/boot/platform_install.sh
+    mv $rootdir/boot $rootdir/boot-$curboard
+    ln -s /boot-$curboard $rootdir/boot
+    apt-mark hold linux-jessie-root-$curboard linux-u-boot-$curboard-default
+fi
+
+target=$1
+if [ -z "$target" ]; then
+    echo "*** Usage: `basename "$0"` boardname"
+    echo "* The following boards are currently set up:"
+    ls -d $rootdir/boot-* | cut -f2 -d-
+    echo -n "* Current boot target is "
+    echo $curboot | cut -f2 -d-
+    echo "* The following boards are supported:"
+    echo $supported
+    #echo $sun7i
+    #ls $rootdir/boot/bin/ | cut -f1 -d.| tr '\n' ' '
+    echo
+    exit 1
+elif echo "$supported" | grep -v "$target " 2>&1 > /dev/null; then
+    echo "*** $target board is not supported"
+    exit 1
+elif [ `basename $curboot` == "boot-$target" ]; then
+    echo "*** $target is already set as boot target"
+    exit 1
+elif [ -e $rootdir/boot-$target/script.bin ]; then
+    echo "* $target ready"
+elif [ $rootdir != "/" ]; then
+    echo "*** Installing $target can only be done from Armbian system"
+    exit 1
+else
+    echo "**********************"
+    echo "* Installing $target *"
+    echo "**********************"
+    set -e
+    echo "$supported" | grep "$target " 2>&1 > /dev/null
+    test "$rootdir" == "/"
+    (cd /tmp; apt-get download linux-jessie-root-$target linux-u-boot-$target-default)
+    mkdir -p /boot-$target/bin
+    mkdir -p /tmp/sunxi-boot
+    dpkg -x /tmp/linux-jessie-root-$target*.deb /tmp/sunxi-boot/
+    cp /tmp/sunxi-boot/boot/bin/* /boot-$target/bin/
+    cp /tmp/sunxi-boot/usr/bin/* /usr/bin/
+    cp /tmp/sunxi-boot/usr/share/armbian/* /boot-$target/
+    echo rootdev=/dev/mmcblk0p1 >> /boot-$target/armbianEnv.txt
+    echo rootfstype=ext4 >> /boot-$target/armbianEnv.txt
+    mkimage -C none -A arm -T script -d /boot-$target/boot.cmd /boot-$target/boot.scr
+    echo >> /boot-$target/modules
+    rm -fr /tmp/sunxi-boot/
+    dpkg -x /tmp/linux-u-boot-$target*.deb /tmp/sunxi-boot/
+    cp /tmp/sunxi-boot/usr/lib/linux-u-boot-$target*/u-boot-sunxi-with-spl.bin /boot-$target/
+    cp /tmp/sunxi-boot/usr/lib/u-boot/platform_install.sh /boot-$target/
+    rm -fr /tmp/sunxi-boot/
+    rm -f /tmp/*.deb
+    #mkdir -p /boot-$target/modprobe.d
+    cp /boot/vmlinuz-* /boot/zImage /boot/uInitrd-* /boot/uInitrd /boot-$target/
+    #echo "TODO: find out modules config"
+    #echo "TODO: install bootloader, kernel, modules"
+    #echo "TODO: put packages on hold"
+    ln -s bin/$target.bin /boot-$target/script.bin
+fi
+
+if [ -e $rootdir/boot-$target ]; then
+    echo "************************"
+    echo "* Switching to $target *"
+    echo "************************"
+    set -e
+    cp -x $rootdir/etc/modules $rootdir/$curboot/modules
+    cp -x $rootdir/etc/modprobe.d/* $rootdir/$curboot/modprobe.d/
+    #dd if="$rootdev" of="$rootdir/$curboot/uboot" bs=1024 skip=8 count=664
+    rm $rootdir/boot
+    ln -s "/boot-$target" "$rootdir/boot"
+    cp -x $rootdir/boot-$target/modules $rootdir/etc/modules || echo nothing to copy
+    #rm -f $rootdir/etc/modules.d/*
+    #cp -x $rootdir/boot-$target/modules.d/* $rootdir/etc/modules.d || echo nothing to copy
+    source $rootdir/boot-$target/platform_install.sh
+    write_uboot_platform $rootdir/boot-$target $rootdev
+    #dd if=$rootdir/boot-$target/uboot of=$rootdev bs=1024 seek=8 count=664
+    sync
+    echo "* Halt your system and plug the SD card into $target board"
+else
+    echo "*** Cannot switch to $target"
+    exit 1
+fi
