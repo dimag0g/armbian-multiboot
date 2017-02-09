@@ -5,9 +5,12 @@ rootpart=`df "$0" | tail -1 | cut -f1 -d' '`
 rootdev=`lsblk -dpno pkname $rootpart`
 curboot=`readlink -f $rootdir/boot`
 
-supported="nanopim1 nanopiair nanopineo bananapim2plus beelinkx2 orangepizero orangepilite orangepione orangepiplus orangepipc orangepipcplus orangepi2 orangepiplus2e "
+sun7i="bananapi bananapipro cubieboard2 cubietruck lamobo-r1 lime2 lime2-emmc lime micro orangepi pcduino3 pcduino3nano "
+sun8i="bananapim2plus beelinkx2 nanopiair nanopim1 nanopim1plus nanopineo orangepi2 orangepilite orangepione orangepipc orangepipcplus orangepiplus2e orangepiplus orangepizero "
+supported="$sun8i"
 
-echo "* Root directory is $rootdir, root device is $rootdev"
+echo "* Root directory is $rootdir"
+echo "* Root device is $rootdev"
 
 if [ `id -u` != 0 ]; then
     echo "*** `basename "$0"` must be run as root"
@@ -25,8 +28,8 @@ if [ `basename $curboot` == "boot" ]; then
     echo -n "* Current board is "
     echo "$supported" | grep -o "$curboard "
     cp $rootdir/etc/modules $rootdir/boot/modules
-    #mkdir -p $rootdir/boot/modprobe.d/
-    #cp $rootdir/etc/modprobe.d/* $rootdir/boot/modprobe.d/
+    mkdir -p $rootdir/boot/modprobe.d/
+    cp $rootdir/etc/modprobe.d/* $rootdir/boot/modprobe.d/
     #dd if=$rootdev of=$rootdir/boot/uboot bs=1024 skip=8 count=664
     cp $rootdir/usr/lib/linux-u-boot-$curboard*/u-boot-sunxi-with-spl.bin $rootdir/boot/
     cp $rootdir/usr/lib/u-boot/platform_install.sh $rootdir/boot/platform_install.sh
@@ -44,7 +47,6 @@ if [ -z "$target" ]; then
     echo $curboot | cut -f2 -d-
     echo "* The following boards are supported:"
     echo $supported
-    #echo $sun7i
     #ls $rootdir/boot/bin/ | cut -f1 -d.| tr '\n' ' '
     echo
     exit 1
@@ -67,27 +69,27 @@ else
     echo "$supported" | grep "$target " 2>&1 > /dev/null
     test "$rootdir" == "/"
     (cd /tmp; apt-get download linux-jessie-root-$target linux-u-boot-$target-default)
-    mkdir -p /boot-$target/bin
+    wget https://raw.githubusercontent.com/igorpecovnik/lib/master/config/boards/$target.conf -O /tmp/$target.conf
     mkdir -p /tmp/sunxi-boot
     dpkg -x /tmp/linux-jessie-root-$target*.deb /tmp/sunxi-boot/
+    dpkg -x /tmp/linux-u-boot-$target*.deb /tmp/sunxi-boot/
+    source /tmp/$target.conf
+    mkdir -p /boot-$target/bin
     cp /tmp/sunxi-boot/boot/bin/* /boot-$target/bin/
     cp /tmp/sunxi-boot/usr/bin/* /usr/bin/
     cp /tmp/sunxi-boot/usr/share/armbian/* /boot-$target/
     echo rootdev=/dev/mmcblk0p1 >> /boot-$target/armbianEnv.txt
     echo rootfstype=ext4 >> /boot-$target/armbianEnv.txt
     mkimage -C none -A arm -T script -d /boot-$target/boot.cmd /boot-$target/boot.scr
-    echo >> /boot-$target/modules
-    rm -fr /tmp/sunxi-boot/
-    dpkg -x /tmp/linux-u-boot-$target*.deb /tmp/sunxi-boot/
+    tr ' ' '\n' <<< "$MODULES"  > /boot-$target/modules
+    mkdir -p /boot-$target/modprobe.d
+    test -z "$MODULES_BLACKLIST" || tr ' ' '\n' <<< "$MODULES_BLACKLIST" | sed -e 's/^/blacklist /' > /boot-$target/modprobe.d/$target.conf
     cp /tmp/sunxi-boot/usr/lib/linux-u-boot-$target*/u-boot-sunxi-with-spl.bin /boot-$target/
     cp /tmp/sunxi-boot/usr/lib/u-boot/platform_install.sh /boot-$target/
-    rm -fr /tmp/sunxi-boot/
-    rm -f /tmp/*.deb
-    #mkdir -p /boot-$target/modprobe.d
-    cp /boot/vmlinuz-* /boot/zImage /boot/uInitrd-* /boot/uInitrd /boot-$target/
-    #echo "TODO: find out modules config"
-    #echo "TODO: install bootloader, kernel, modules"
-    #echo "TODO: put packages on hold"
+    #cp /tmp/$target.conf /boot-$target/
+    rm -fr /tmp/sunxi-boot/ /tmp/*.deb /tmp/$target.conf
+    cp -P /boot/vmlinuz-* /boot/zImage /boot/uInitrd-* /boot/uInitrd /boot-$target/
+    #echo "TODO: install kernel, modules"
     ln -s bin/$target.bin /boot-$target/script.bin
 fi
 
@@ -96,14 +98,15 @@ if [ -e $rootdir/boot-$target ]; then
     echo "* Switching to $target *"
     echo "************************"
     set -e
-    cp -x $rootdir/etc/modules $rootdir/$curboot/modules
-    cp -x $rootdir/etc/modprobe.d/* $rootdir/$curboot/modprobe.d/
+    cp -x $rootdir/etc/modules $rootdir/$curboot/modules || true
+    rm -f $rootdir/$curboot/modprobe.d/*
+    cp -x $rootdir/etc/modprobe.d/* $rootdir/$curboot/modprobe.d/ || true
     #dd if="$rootdev" of="$rootdir/$curboot/uboot" bs=1024 skip=8 count=664
     rm $rootdir/boot
-    ln -s "/boot-$target" "$rootdir/boot"
-    cp -x $rootdir/boot-$target/modules $rootdir/etc/modules || echo nothing to copy
-    #rm -f $rootdir/etc/modules.d/*
-    #cp -x $rootdir/boot-$target/modules.d/* $rootdir/etc/modules.d || echo nothing to copy
+    ln -s "/boot-$target" $rootdir/boot
+    cp -x $rootdir/boot-$target/modules $rootdir/etc/modules || true
+    rm -f $rootdir/etc/modprobe.d/*
+    cp -x $rootdir/boot-$target/modprobe.d/* $rootdir/etc/modprobe.d || true
     source $rootdir/boot-$target/platform_install.sh
     write_uboot_platform $rootdir/boot-$target $rootdev
     #dd if=$rootdir/boot-$target/uboot of=$rootdev bs=1024 seek=8 count=664
